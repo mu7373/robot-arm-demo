@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>示教器 pendant.js 演示</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1218; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; }
+  #panel { position: fixed; top: 16px; right: 16px; max-height: calc(100vh - 32px); overflow: auto; }
+  #hint {
+    position: fixed; left: 16px; bottom: 14px; max-width: 46vw;
+    color: #8ea0b5; font: 12px/1.6 system-ui, "Microsoft YaHei", sans-serif;
+  }
+  #hint b { color: #cfe0f5; font-weight: 600; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="panel"></div>
+<div id="hint">
+  <b>示教器演示</b><br>
+  拖动滑块或输入角度（度）→ 机械臂按速度倍率平滑走到目标；<br>
+  面板上的“当前角度 / 末端位姿”每帧取自场景真实姿态，不是滑块值的复读。
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RobotController } from './src/contract.js';
+import { createPendant } from './src/robot/pendant.js';
+
+const host = document.getElementById('stage');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+host.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1218);
+scene.fog = new THREE.Fog(0x0e1218, 40, 90);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
+
+scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x1a2028, 1.1));
+const key = new THREE.DirectionalLight(0xffffff, 1.6);
+key.position.set(8, 14, 10);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -22;
+key.shadow.camera.right = 22;
+key.shadow.camera.top = 22;
+key.shadow.camera.bottom = -22;
+key.shadow.camera.near = 1;
+key.shadow.camera.far = 80;
+key.shadow.bias = -0.0006;
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x6fa8ff, 0.7);
+rim.position.set(-10, 6, -8);
+scene.add(rim);
+
+const grid = new THREE.GridHelper(60, 60, 0x2b3648, 0x18202b);
+grid.position.y = 0;
+scene.add(grid);
+
+// 工作台地面：比背景亮一点，才看得见机械臂投下的阴影
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(160, 160),
+  new THREE.MeshStandardMaterial({ color: 0x1b2430, roughness: 0.96, metalness: 0.0 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -0.01;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// ── 加载机械臂 ──
+const jointMap = await (await fetch('./assets/joint_map.json')).json();
+const ctl = new RobotController();
+const { robot } = await ctl.loadRobot('./assets/robot_articulated.glb', jointMap);
+robot.traverse((o) => {
+  if (o.isMesh) {
+    o.castShadow = true;
+    o.receiveShadow = true;
+  }
+});
+scene.add(robot);
+
+// 把模型底座落到地面上，再按包围盒自动取景（换模型也不用改相机参数）
+const rawBox = new THREE.Box3().setFromObject(robot);
+robot.position.y -= rawBox.min.y;
+robot.updateMatrixWorld(true);
+
+const box = new THREE.Box3().setFromObject(robot);
+const size = box.getSize(new THREE.Vector3());
+const center = box.getCenter(new THREE.Vector3());
+const radius = Math.max(size.length() * 0.62, 5);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(center);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+camera.position.copy(center).add(new THREE.Vector3(radius, radius * 0.85, radius * 1.05));
+controls.update();
+
+// ── 挂载示教器 ──
+const pendant = createPendant({
+  container: '#panel',
+  controller: ctl,
+  title: '示教器 · 5 轴'
+});
+window.pendant = pendant;   // 方便在 F12 里直接调：pendant.setPoseDeg([30,0,0,0,0])
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
