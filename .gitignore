@@ -12,3 +12,6 @@ Thumbs.db
 # Python
 __pycache__/
 *.pyc
+
+# 个人答辩材料，不进公开仓库
+答辩要点.docx
