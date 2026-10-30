@@ -6,12 +6,13 @@
   "description": "实验一 机械臂仿真：模型导入、关节运动控制与示教器界面（计算机图形与动画 · CM11）",
   "scripts": {
     "start": "node server.mjs",
-    "verify": "node tools/verify_fk.mjs && python tools/verify_fk.py",
+    "verify": "node tools/verify_fk.mjs && node tools/verify_fk_scene.mjs && python tools/verify_fk.py",
     "dump": "python tools/dump_model.py",
     "plan": "python tools/plan.py",
     "figures": "python tools/analysis_trajectory.py && python tools/analysis_workspace.py",
     "anim": "python tools/animation.py",
-    "all": "npm run dump && npm run verify && npm run plan && npm run figures && npm run anim"
+    "all": "npm run dump && npm run verify && npm run plan && npm run figures && npm run anim",
+    "verify:scene": "node tools/verify_fk_scene.mjs"
   },
   "dependencies": {
     "three": "^0.169.0"

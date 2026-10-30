@@ -340,7 +340,8 @@ $('btnVerify').onclick = () => {
     $('kVerify').innerHTML = res.pass
       ? '<span class="badge pass">PASS</span>'
       : '<span class="badge fail">FAIL</span>';
-    $('kT1').textContent = res.tier1.errVsBaseline.toExponential(2) + ' u';
+    $('kT1').textContent = '基准 ' + res.tier1.errVsBaseline.toExponential(2) +
+      ' / 场景树 ' + res.tier1.errVsScene.toExponential(2) + ' u';
     $('kT2').textContent = res.tier2.maxErr.toExponential(2) + ' u';
     $('kT3').textContent = res.tier3.maxPosErr.toExponential(2) + ' u / ' +
       res.tier3.maxRpyErrDeg.toExponential(1) + '°';

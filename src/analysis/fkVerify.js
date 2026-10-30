@@ -34,12 +34,23 @@ import {
  * 由 tools/verify_fk.py 独立算出：直接读 GLB 顶点、按节点层级连乘，
  * 不经过 three、也不经过 fk.js。三档验证拿它当"外部基准"。
  */
-export const GLB_BASELINE_TCP = Object.freeze([-1.600981, 12.491081, -5.126752]);
+export const GLB_BASELINE_TCP = Object.freeze([
+  -1.6009807921272521,
+  12.491080831009272,
+  -5.1267520973035881
+]);
 
 /** 位置误差判据（模型单位；1u = 100 mm，1e-9 u = 0.1 nm，远严于工程需要） */
 export const POS_TOL = 1e-9;
-/** 姿态误差判据（度） */
-export const RPY_TOL = 1e-6;
+/**
+ * 姿态误差判据（度）。
+ *
+ * 为什么不是 1e-6：GLB 里的旋转四元数本身是 float32 存的，相对精度约 1.2e-7，
+ * 换算成角度就是 6.9e-6° 量级。也就是说哪怕两条链路都完全正确，
+ * 姿态夹角也不可能是 0——1e-4° 已经在 float32 噪声之上留了一个数量级余量，
+ * 同时仍然比任何有物理意义的姿态误差（哪怕 0.001°）严得多。
+ */
+export const RPY_TOL = 1e-4;
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
@@ -64,6 +75,59 @@ function sceneTCP(robot, tcpName) {
   if (!tcp) throw new Error(`[fkVerify] 场景里找不到 ${tcpName}`);
   const e = tcp.matrixWorld.elements;      // three 的矩阵是列主序
   return [e[12], e[13], e[14]];
+}
+
+/**
+ * 从 matrixWorld 里取出世界姿态（四元数），列主序，并先归一化掉缩放。
+ *
+ * 注意：不能用 tcp.quaternion —— 那是节点自己的【局部】静止姿态，
+ * 而 FK 算出来的是【世界】姿态，两者根本不是同一个东西（差着整条父链）。
+ * 直接对比会得到离谱的 180°，这正是第一版验证误报 FAIL 的原因。
+ */
+function sceneWorldQuat(robot, tcpName) {
+  const tcp = robot.getObjectByName(tcpName, true);
+  const e = tcp.matrixWorld.elements;
+  // 三列各自归一化，去掉可能的缩放
+  const col = (i) => {
+    const v = [e[i], e[i + 1], e[i + 2]];
+    const n = Math.hypot(v[0], v[1], v[2]) || 1;
+    return v.map((x) => x / n);
+  };
+  const c0 = col(0);
+  const c1 = col(4);
+  const c2 = col(8);
+  const m00 = c0[0], m10 = c0[1], m20 = c0[2];
+  const m01 = c1[0], m11 = c1[1], m21 = c1[2];
+  const m02 = c2[0], m12 = c2[1], m22 = c2[2];
+
+  const tr = m00 + m11 + m22;
+  let x, y, z, w, s;
+  if (tr > 0) {
+    s = Math.sqrt(tr + 1) * 2;
+    w = 0.25 * s;
+    x = (m21 - m12) / s;
+    y = (m02 - m20) / s;
+    z = (m10 - m01) / s;
+  } else if (m00 > m11 && m00 > m22) {
+    s = Math.sqrt(1 + m00 - m11 - m22) * 2;
+    w = (m21 - m12) / s;
+    x = 0.25 * s;
+    y = (m01 + m10) / s;
+    z = (m02 + m20) / s;
+  } else if (m11 > m22) {
+    s = Math.sqrt(1 + m11 - m00 - m22) * 2;
+    w = (m02 - m20) / s;
+    x = (m01 + m10) / s;
+    y = 0.25 * s;
+    z = (m12 + m21) / s;
+  } else {
+    s = Math.sqrt(1 + m22 - m00 - m11) * 2;
+    w = (m10 - m01) / s;
+    x = (m02 + m20) / s;
+    y = (m12 + m21) / s;
+    z = 0.25 * s;
+  }
+  return quatNormalize([x, y, z, w]);
 }
 
 /**
@@ -93,7 +157,7 @@ export function verifyFK(model, robot, opts = {}) {
     errVsBaseline: dist(fkZero, GLB_BASELINE_TCP),
     errVsScene: dist(fkZero, scZero)
   };
-  tier1.pass = tier1.errVsBaseline < 1e-5 && tier1.errVsScene < POS_TOL;
+  tier1.pass = tier1.errVsBaseline < 1e-6 && tier1.errVsScene < POS_TOL;
 
   /* ── 二档：单关节 ±90° ── */
   const tier2 = { rows: [], maxErr: 0 };
@@ -134,9 +198,8 @@ export function verifyFK(model, robot, opts = {}) {
     const e = dist(fkRes.p, scP);
     tier3.maxPosErr = Math.max(tier3.maxPosErr, e);
     tier3.rows++;
-    // 姿态：场景侧用四元数微分算夹角，避免 RPY 在 ±180° 处的跳变
-    const tcp = robot.getObjectByName(tcpName, true);
-    const sq = [tcp.quaternion.x, tcp.quaternion.y, tcp.quaternion.z, tcp.quaternion.w];
+    // 姿态：拿【世界】四元数对比，用 |点积| 算夹角，避免 RPY 在 ±180° 处的跳变
+    const sq = sceneWorldQuat(robot, tcpName);
     const dotq = Math.abs(
       sq[0] * fkRes.quat[0] + sq[1] * fkRes.quat[1] + sq[2] * fkRes.quat[2] + sq[3] * fkRes.quat[3]
     );
