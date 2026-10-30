@@ -129,7 +129,7 @@
 
   <h2>4 · 可达区域（要求 d）</h2>
   <div class="row">
-    <button id="btnWorkspace" disabled>蒙特卡洛 30000 组</button>
+    <button id="btnWorkspace" disabled>蒙特卡洛 60000 组</button>
   </div>
   <div class="kv">
     <span>样本数</span><b id="kWsN">—</b>
@@ -478,7 +478,7 @@ $('btnExport').onclick = () => {
 $('btnWorkspace').onclick = () => {
   try {
     const t = performance.now();
-    const ws = analyzeWorkspace(S.model, { count: 30000, seed: 20240607, groundY: 1.095 });
+    const ws = analyzeWorkspace(S.model, { count: 60000, seed: 20240607, groundY: 1.095 });
     S.ws = ws;
     const ms = (performance.now() - t).toFixed(0);
     const s = ws.stats;
@@ -582,12 +582,17 @@ function drawOccupancy(ws) {
   ctx.font = '600 12px "Microsoft YaHei", sans-serif';
   ctx.fillText(`工作平面截面占位图（x≈${(ws.sliceX * MM).toFixed(0)} mm 层，横轴 Z / 纵轴 Y，mm）`, pad.l, 16);
 
+  // 三次分层：被外边界围住的区域画成浅蓝（含零星没采到的空格——那是采样噪声，不是空洞），
+  // 只有 findHoles 判定出来的连通空洞（≥minCells 格）才画橙色。
+  // 早先这里把"region 内所有空格"都画成橙色，结果满屏橙点，像几十个洞，实际全是采样稀疏。
+  const region = ws.holes.region;
   for (let j = 0; j < g.ny; j++) {
     for (let i = 0; i < g.nx; i++) {
       const k = j * g.nx + i;
       let fill = null;
       if (g.occ[k]) fill = '#2f4f7f';
-      else if (ws.holes.region[k]) fill = '#d9822b';
+      else if (ws.holes.holes[k]) fill = '#d9822b';
+      else if (region[k]) fill = '#bcd3ee';
       if (fill) {
         ctx.fillStyle = fill;
         ctx.fillRect(x0 + i * sx, y1 - (j + 1) * sy, sx + 0.4, sy + 0.4);
