@@ -107,7 +107,8 @@
   </div>
   <div class="kv">
     <span>程序段数 / 总时长</span><b id="kProg">—</b>
-    <span>段间最大跳变</span><b id="kJump">—</b>
+    <span>相邻位姿最大变化</span><b id="kDelta">—</b>
+    <span>段间连续（应为 0）</span><b id="kJump">—</b>
     <span>速度倍率</span><b id="kScale">100%</b>
   </div>
   <p class="tip">MOVJ 在关节空间里插值，末端走的是弧线不是直线——这正是下面偏差曲线的来源。</p>
@@ -377,8 +378,14 @@ $('btnProgram').onclick = async () => {
     const limits = { lower: S.model.lower, upper: S.model.upper };
     const chk = checkProgram(S.program, limits);
 
+    // 「相邻位姿最大变化」= 相邻两个示教位姿之间关节角的改变量（决定每段走多久）
+    // 「段间连续」= 上一段终点与下一段起点的差值，MOVJ 串联后它必须是 0，
+    //              不为 0 说明程序拼接处有跳变，机械臂会瞬移
+    const maxDeltaDeg = Math.max(...S.program.segments.map((s) => s.maxDeltaDeg));
     $('kProg').textContent = `${S.program.segments.length} 段 / ${S.program.totalDuration.toFixed(2)} s`;
-    $('kJump').textContent = chk.maxJumpDeg.toFixed(2) + '°';
+    $('kDelta').textContent = maxDeltaDeg.toFixed(2) + '°';
+    $('kJump').textContent = chk.maxJumpDeg.toFixed(6) + '°';
+    $('kJump').style.color = chk.maxJumpDeg < 1e-9 ? '#63d68a' : '#ff7b72';
     $('kScale').textContent = Math.round(S.program.speedScale * 100) + '%';
 
     clearLog();
@@ -386,7 +393,10 @@ $('btnProgram').onclick = async () => {
     log(`  圆心 (${raw.circle.center.map((v) => (v * MM).toFixed(0)).join(', ')}) mm，` +
         `半径 ${(raw.circle.radius * MM).toFixed(0)} mm`, 'dim');
     log(`  程序 ${S.program.segments.length} 段，总时长 ${S.program.totalDuration.toFixed(2)} s`, 'dim');
-    log(`  段间最大跳变 ${chk.maxJumpDeg.toFixed(2)}°，限位检查 ${chk.ok ? '全部通过' : '有问题'}`, chk.ok ? 'dim' : 'bad');
+    log(`  相邻位姿最大变化 ${maxDeltaDeg.toFixed(2)}°（决定每段时长，按 90°/s 折算）`, 'dim');
+    log(`  段间连续 ${chk.maxJumpDeg.toFixed(6)}°（MOVJ 串联必须为 0，否则拼接处会瞬移）`,
+        chk.maxJumpDeg < 1e-9 ? 'ok' : 'bad');
+    log(`  限位检查 ${chk.ok ? '全部通过' : '有问题：' + chk.issues.join('；')}`, chk.ok ? 'dim' : 'bad');
 
     ['btnPlay', 'btnStop'].forEach((id) => { $(id).disabled = false; });
   } catch (e) {
