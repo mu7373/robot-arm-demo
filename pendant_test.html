@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -97,6 +97,8 @@ robot.traverse((o) => {
 });
 scene.add(robot);
 
+
+
 // 把模型底座落到地面上，再按包围盒自动取景（换模型也不用改相机参数）
 const rawBox = new THREE.Box3().setFromObject(robot);
 robot.position.y -= rawBox.min.y;
@@ -121,6 +123,25 @@ const pendant = createPendant({
   title: '示教器 · 5 轴'
 });
 window.pendant = pendant;   // 方便在 F12 里直接调：pendant.setPoseDeg([30,0,0,0,0])
+
+// 关节链路自检：正常时 qZero 长度=1，且"反解角"≈"设定角"。
+// 若对不上，说明有代码直接写了 node.quaternion / node.rotation（丢了 qZero），模型会像散架。
+window.checkRig = () => {
+  const rows = ctl.joints.map((j) => {
+    const rel = j.qZero.clone().invert().multiply(j.node.quaternion);
+    const fromQuat = 2 * Math.atan2(rel.z, rel.w) * 180 / Math.PI;
+    const angleDeg = (Number(j.angle) || 0) * 180 / Math.PI;
+    return {
+      关节: j.name,
+      qZero长度: +j.qZero.length().toFixed(6),
+      设定角: +angleDeg.toFixed(3),
+      反解角: +fromQuat.toFixed(3),
+      正常: Math.abs(fromQuat - angleDeg) < 0.01
+    };
+  });
+  console.table(rows);
+  return rows;
+};
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;

@@ -1,0 +1,221 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>标定工作台 · 工具坐标系 / 用户坐标系</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1218; }
+  #stage { position: fixed; left: 404px; right: 392px; top: 0; bottom: 0; }
+  #stage canvas { display: block; }
+  #cal { position: fixed; left: 16px; top: 16px; max-height: calc(100vh - 32px); overflow: auto; }
+  #panel { position: fixed; right: 16px; top: 16px; max-height: calc(100vh - 32px); overflow: auto; }
+  #hint {
+    position: fixed; left: 404px; bottom: 10px; max-width: 40vw;
+    color: #7f90a5; font: 11.5px/1.55 system-ui, "Microsoft YaHei", sans-serif;
+  }
+  #resetPose {
+    position: fixed; left: 404px; bottom: 44px; z-index: 5;
+    padding: 6px 10px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #2b3644; background: #1b222c; color: #dfe6f0;
+    font: 12px system-ui, "Microsoft YaHei", sans-serif;
+  }
+  #resetPose:hover { border-color: #3fa9f5; }
+  @media (max-width: 1180px) {
+    #stage { left: 0; right: 0; }
+    #hint { display: none; }
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="cal"></div>
+<div id="panel"></div>
+<button id="resetPose" type="button">复位姿态</button>
+<div id="hint">
+  标定流程：先用示教器把工具尖摆到一个方便的位置 → 左侧点「示教点 1」定标定点 →
+  再点 2/3/4（自动换姿态对准同一点）→ 计算 → 三点法自动示教 → 计算 → 保存。
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RobotController } from './src/contract.js';
+import { createPendant } from './src/robot/pendant.js';
+import { createCalibrationPanel } from './src/robot/calibrationPanel.js';
+
+const host = document.getElementById('stage');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(host.clientWidth, host.clientHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+host.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1218);
+scene.fog = new THREE.Fog(0x0e1218, 46, 100);
+
+const camera = new THREE.PerspectiveCamera(45, host.clientWidth / host.clientHeight, 0.1, 500);
+
+scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x1a2028, 1.1));
+const key = new THREE.DirectionalLight(0xffffff, 1.6);
+key.position.set(9, 16, 11);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -24;
+key.shadow.camera.right = 24;
+key.shadow.camera.top = 24;
+key.shadow.camera.bottom = -24;
+key.shadow.camera.near = 1;
+key.shadow.camera.far = 90;
+key.shadow.bias = -0.0006;
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x6fa8ff, 0.7);
+rim.position.set(-11, 7, -9);
+scene.add(rim);
+
+const grid = new THREE.GridHelper(60, 60, 0x2b3648, 0x18202b);
+scene.add(grid);
+
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(160, 160),
+  new THREE.MeshStandardMaterial({ color: 0x1b2430, roughness: 0.96, metalness: 0.0 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -0.01;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// ── 机械臂 + 标定针 ──
+const jointMap = await (await fetch('./assets/joint_map.json')).json();
+const ctl = new RobotController();
+const { robot } = await ctl.loadRobot('./assets/robot_articulated.glb', jointMap);
+
+// 模型自带的 tcp 节点就在法兰面上（没有工具），工具坐标系标定会解出 0。
+// 这里把 tooltip.glb 当标定针装在法兰上，针尖才是真正的 TCP。
+const flange = robot.getObjectByName('link_flange', true);
+if (!flange) throw new Error('GLB 里找不到 link_flange');
+
+const toolGltf = await new GLTFLoader().loadAsync('./assets/tooltip.glb');
+const tool = toolGltf.scene;
+const toolBox = new THREE.Box3().setFromObject(tool);
+const toolLength = toolBox.max.y;              // 针长（模型沿 +Y）
+tool.rotation.x = Math.PI / 2;                 // 让模型 +Y 对准法兰局部 +Z
+tool.position.set(0, -toolBox.min.y, 0);       // 针尾贴住法兰面
+flange.add(tool);
+
+// 针尖：法兰坐标系下的 (0, 0, 针长)
+const toolTip = new THREE.Object3D();
+toolTip.name = 'toolTip';
+toolTip.position.set(0, 0, toolLength);
+flange.add(toolTip);
+ctl.tcp = toolTip;                             // 之后示教器读到的就是针尖
+
+robot.traverse((o) => {
+  if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+});
+scene.add(robot);
+
+
+
+const rawBox = new THREE.Box3().setFromObject(robot);
+robot.position.y -= rawBox.min.y;
+robot.updateMatrixWorld(true);
+
+const box = new THREE.Box3().setFromObject(robot);
+const size = box.getSize(new THREE.Vector3());
+const center = box.getCenter(new THREE.Vector3());
+const radius = Math.max(size.length() * 0.72, 6);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(center);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+camera.position.copy(center).add(new THREE.Vector3(radius, radius * 0.75, radius * 1.0));
+controls.update();
+
+// ── 面板 ──
+const pendant = createPendant({ container: '#panel', controller: ctl, title: '示教器 · 5 轴' });
+
+const calibration = createCalibrationPanel({
+  container: '#cal',
+  controller: ctl,
+  robot,
+  tcp: toolTip,
+  modelToolOffset: [0, 0, toolLength],   // 标定针的几何真值，用来对比标定结果
+  onRobotMoved: () => pendant.sync()
+});
+
+// 上一帧标定面板动过机械臂，示教器要重新对齐目标，否则会被拽回去
+window.pendant = pendant;
+window.calibration = calibration;
+
+/**
+ * 关节链路自检：关节真实姿态必须等于 qZero ⊗ Rz(θ)。
+ * 如果控制台里 qZero 长度不是 1，或者"反解角"和"设定角"对不上，
+ * 说明有代码直接写了 node.quaternion / node.rotation（把静止旋转 qZero 丢了），
+ * 模型就会像"零件散开"一样。
+ */
+function checkRig() {
+  const rows = ctl.joints.map((j) => {
+    const rel = j.qZero.clone().invert().multiply(j.node.quaternion);
+    const fromQuat = 2 * Math.atan2(rel.z, rel.w) * 180 / Math.PI;
+    const angleDeg = (Number(j.angle) || 0) * 180 / Math.PI;
+    return {
+      关节: j.name,
+      qZero长度: +j.qZero.length().toFixed(6),
+      设定角: +angleDeg.toFixed(3),
+      反解角: +fromQuat.toFixed(3),
+      偏差: +Math.abs(fromQuat - angleDeg).toFixed(6),
+      正常: Math.abs(fromQuat - angleDeg) < 0.01 && Math.abs(j.qZero.length() - 1) < 1e-3
+    };
+  });
+  console.table(rows);
+  const bad = rows.filter((r) => !r.正常);
+  if (bad.length) console.warn('[自检] 这些关节的 qZero 和当前姿态对不上：', bad.map((r) => r.关节));
+  else console.log('[自检] 关节链路正常：qZero 未丢失，5 个关节都对得上');
+  return rows;
+}
+
+window.view = {
+  scene, camera, controls, robot, toolTip, renderer,
+  joints: ctl.joints,
+  checkRig
+};
+
+// 标定准备姿态：让臂弯起来，四个姿态和三个示教点都够得着
+function readyPose() {
+  const deg = [0, -32, 42, 0, 0];
+  ctl.setAllJoints(deg.map((d) => d * Math.PI / 180));
+  robot.updateMatrixWorld(true);
+  pendant.sync();
+}
+readyPose();
+window.readyPose = readyPose;
+document.getElementById('resetPose').addEventListener('click', () => readyPose());
+checkRig();
+
+window.addEventListener('resize', () => {
+  camera.aspect = host.clientWidth / host.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(host.clientWidth, host.clientHeight);
+});
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

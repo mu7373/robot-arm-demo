@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>正运动学动画 · 5 关节驱动全臂（第 30 页）</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1218; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; }
+
+  #hud {
+    position: fixed; left: 16px; top: 16px; width: 236px;
+    padding: 12px; border-radius: 12px; border: 1px solid #2b3644; background: #141a22cc;
+    color: #e2e9f3; font: 12px/1.5 system-ui, "Microsoft YaHei", sans-serif;
+    backdrop-filter: blur(4px);
+  }
+  #hud h3 { margin: 0 0 8px; font-size: 13px; letter-spacing: .5px; }
+  .row { display: flex; justify-content: space-between; gap: 8px; font-variant-numeric: tabular-nums; }
+  .row span:first-child { color: #8ea0b5; }
+  .sep { height: 1px; background: #2b3644; margin: 8px 0; }
+  .tag { color: #3fa9f5; }
+
+  #bar {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-radius: 12px; border: 1px solid #2b3644; background: #141a22dd;
+    color: #dfe6f0; font: 12px system-ui, "Microsoft YaHei", sans-serif;
+    backdrop-filter: blur(4px);
+  }
+  #bar button {
+    padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #2b3644; background: #222b37; color: #e2e9f3; font: inherit;
+  }
+  #bar button:hover { border-color: #3fa9f5; }
+  #bar label { display: flex; align-items: center; gap: 6px; color: #8ea0b5; }
+  #bar input[type="range"] { width: 100px; accent-color: #3fa9f5; }
+  #bar input[type="checkbox"] { accent-color: #3fa9f5; }
+  #legend {
+    position: fixed; left: 16px; bottom: 16px; max-width: 340px;
+    color: #7f90a5; font: 11.5px/1.6 system-ui, "Microsoft YaHei", sans-serif;
+  }
+  #legend b { color: #cfe0f5; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="stage"></div>
+
+<div id="hud">
+  <h3>关节角 / 末端位姿</h3>
+  <div id="jointRows"></div>
+  <div class="sep"></div>
+  <div class="row"><span>TCP X</span><span class="tag" id="tcpX">—</span></div>
+  <div class="row"><span>TCP Y</span><span class="tag" id="tcpY">—</span></div>
+  <div class="row"><span>TCP Z</span><span class="tag" id="tcpZ">—</span></div>
+</div>
+
+<div id="bar">
+  <button id="play" type="button">暂停</button>
+  <label>速度 <input id="speed" type="range" min="0.2" max="2.5" step="0.1" value="1"><span id="speedVal">1.0×</span></label>
+  <label><input id="axes" type="checkbox"> 关节轴</label>
+  <label><input id="trailOn" type="checkbox" checked> 末端轨迹</label>
+  <button id="clear" type="button">清空轨迹</button>
+  <button id="export" type="button">导出 CSV</button>
+</div>
+
+<div id="legend">
+  <b>正运动学演示</b><br>
+  ① 采样 q(t)　② 逐级换算末端位姿　③ 每帧写 J_i 局部旋转　④ 记录末端轨迹<br>
+  勾选「关节轴」可以看到每个关节的转轴：<span style="color:#ff5a5f">X 红</span> /
+  <span style="color:#3ddc97">Y 绿</span> / <span style="color:#3fa9f5">Z 蓝</span>，
+  关节就绕自己的局部 <b>Z</b> 轴、在连接处转动。
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RobotController } from './src/contract.js';
+
+const DEG = Math.PI / 180;
+const RAD = 180 / Math.PI;
+
+const host = document.getElementById('stage');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+host.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1218);
+scene.fog = new THREE.Fog(0x0e1218, 46, 100);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
+
+scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x1a2028, 1.2));
+const key = new THREE.DirectionalLight(0xffffff, 1.6);
+key.position.set(9, 16, 11);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -24;
+key.shadow.camera.right = 24;
+key.shadow.camera.top = 24;
+key.shadow.camera.bottom = -24;
+key.shadow.camera.near = 1;
+key.shadow.camera.far = 90;
+key.shadow.bias = -0.0006;
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x6fa8ff, 0.7);
+rim.position.set(-11, 7, -9);
+scene.add(rim);
+
+scene.add(new THREE.GridHelper(60, 60, 0x2b3648, 0x18202b));
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(160, 160),
+  new THREE.MeshStandardMaterial({ color: 0x1b2430, roughness: 0.96, metalness: 0 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -0.01;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// ── 模型 ──
+const jointMap = await (await fetch('./assets/joint_map.json')).json();
+const ctl = new RobotController();
+const { robot } = await ctl.loadRobot('./assets/robot_articulated.glb', jointMap);
+
+robot.traverse((o) => {
+  if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+});
+
+const rawBox = new THREE.Box3().setFromObject(robot);
+robot.position.y -= rawBox.min.y;
+robot.updateMatrixWorld(true);
+scene.add(robot);
+
+const box = new THREE.Box3().setFromObject(robot);
+const size = box.getSize(new THREE.Vector3());
+const center = box.getCenter(new THREE.Vector3());
+const radius = Math.max(size.length() * 0.95, 8);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(center);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+camera.position.copy(center).add(new THREE.Vector3(radius, radius * 0.7, radius * 1.05));
+controls.update();
+
+// ── 关节轴可视化（每个关节挂一个 AxesHelper，看它绕哪个轴转）──
+const axisHelpers = ctl.joints.map((j) => {
+  const h = new THREE.AxesHelper(2.0);
+  h.visible = false;
+  h.renderOrder = 2;
+  j.node.add(h);
+  return h;
+});
+
+// ── 末端轨迹 ──
+const MAX_POINTS = 6000;
+const trailPositions = new Float32Array(MAX_POINTS * 3);
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+trailGeo.setDrawRange(0, 0);
+const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0x4fc3ff }));
+trail.frustumCulled = false;
+scene.add(trail);
+
+const tipDot = new THREE.Mesh(
+  new THREE.SphereGeometry(0.16, 16, 12),
+  new THREE.MeshBasicMaterial({ color: 0x4fc3ff })
+);
+scene.add(tipDot);
+
+let trailCount = 0;
+function pushTrail(p) {
+  if (trailCount >= MAX_POINTS) { trailCount = 0; }
+  const i = trailCount * 3;
+  trailPositions[i] = p.x;
+  trailPositions[i + 1] = p.y;
+  trailPositions[i + 2] = p.z;
+  trailCount++;
+  trailGeo.setDrawRange(0, trailCount);
+  trailGeo.attributes.position.needsUpdate = true;
+  trailGeo.computeBoundingSphere();
+}
+
+// ── 采样 q(t)：各关节在限位内平滑变化（J3 的横摆让末端离开单一平面）──
+function samplePose(t) {
+  return [
+    0.72 * Math.sin(t * 0.90),          // J1 底座回转
+    0.62 * Math.sin(t * 0.70 + 0.45),   // J2 大臂
+    0.70 * Math.sin(t * 1.15 + 1.10),   // J3 横摆（倾斜 28°）
+    0.95 * Math.sin(t * 0.80 + 2.20),   // J4 腕部
+    1.15 * Math.sin(t * 1.25 + 0.80)    // J5 法兰自转
+  ];
+}
+
+// ── HUD ──
+const jointRows = document.getElementById('jointRows');
+const rowEls = ctl.joints.map((j) => {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const name = document.createElement('span');
+  name.textContent = j.name;
+  const val = document.createElement('span');
+  val.textContent = '0.000°';
+  row.append(name, val);
+  jointRows.appendChild(row);
+  return val;
+});
+const tcpEls = [document.getElementById('tcpX'), document.getElementById('tcpY'), document.getElementById('tcpZ')];
+
+let lastHud = 0;
+function updateHud(pose) {
+  const now = performance.now();
+  if (now - lastHud < 80) return;
+  lastHud = now;
+  ctl.joints.forEach((j, i) => {
+    rowEls[i].textContent = ((Number(j.angle) || 0) * RAD).toFixed(1) + '°';
+  });
+  if (pose) {
+    tcpEls[0].textContent = pose.p.x.toFixed(3);
+    tcpEls[1].textContent = pose.p.y.toFixed(3);
+    tcpEls[2].textContent = pose.p.z.toFixed(3);
+  }
+}
+
+// ── 记录（导出 CSV 用）──
+const samples = [];
+let recordedAt = 0;
+
+// ── 主循环 ──
+let playing = true;
+let speed = 1;
+let phase = 0;
+let lastT = performance.now();
+let tcpPose = null;
+
+function step(now) {
+  const dt = Math.min(0.05, (now - lastT) / 1000);
+  lastT = now;
+
+  if (playing) {
+    phase += dt * speed;
+    const q = samplePose(phase);
+    ctl.setAllJoints(q);              // 内部按 qZero ⊗ Rz(θ) 写节点，限位已钳制
+    robot.updateMatrixWorld(true);
+    tcpPose = ctl.getTCPPose();
+    tipDot.position.set(tcpPose.p.x, tcpPose.p.y, tcpPose.p.z);
+    if (trailOn.checked) pushTrail(tcpPose.p);
+
+    recordedAt += dt;
+    if (recordedAt > 0.05) {
+      recordedAt = 0;
+      samples.push([
+        phase.toFixed(4),
+        ...ctl.getJointAnglesDeg().map((v) => v.toFixed(3)),
+        tcpPose.p.x.toFixed(4), tcpPose.p.y.toFixed(4), tcpPose.p.z.toFixed(4),
+        (tcpPose.rpy.r * RAD).toFixed(3), (tcpPose.rpy.p * RAD).toFixed(3), (tcpPose.rpy.y * RAD).toFixed(3)
+      ]);
+      if (samples.length > 12000) samples.shift();
+    }
+  }
+
+  updateHud(tcpPose);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+renderer.setAnimationLoop(step);
+
+// ── 控件 ──
+const playBtn = document.getElementById('play');
+playBtn.addEventListener('click', () => {
+  playing = !playing;
+  playBtn.textContent = playing ? '暂停' : '播放';
+});
+
+const speedInput = document.getElementById('speed');
+const speedVal = document.getElementById('speedVal');
+speedInput.addEventListener('input', () => {
+  speed = Number(speedInput.value);
+  speedVal.textContent = speed.toFixed(1) + '×';
+});
+
+const trailOn = document.getElementById('trailOn');
+trailOn.addEventListener('change', () => { trail.visible = trailOn.checked; });
+
+const axesBox = document.getElementById('axes');
+axesBox.addEventListener('change', () => {
+  for (const h of axisHelpers) h.visible = axesBox.checked;
+});
+
+document.getElementById('clear').addEventListener('click', () => {
+  trailCount = 0;
+  trailGeo.setDrawRange(0, 0);
+  samples.length = 0;
+});
+
+document.getElementById('export').addEventListener('click', () => {
+  const head = ['t', 'J1', 'J2', 'J3', 'J4', 'J5', 'x', 'y', 'z', 'R', 'P', 'Y'];
+  const csv = [head.join(',')].concat(samples.map((r) => r.join(','))).join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'fk_end_trajectory.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// 调试用
+window.fkDemo = {
+  ctl, robot, setPhase: (p) => { phase = p; },
+  setPlaying: (v) => { playing = v; playBtn.textContent = v ? '暂停' : '播放'; },
+  getSamples: () => samples
+};
+</script>
+</body>
+</html>

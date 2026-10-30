@@ -103,7 +103,7 @@ function injectStyle() {
   --pd-ok: #3ddc97;
   --pd-warn: #ffb020;
   --pd-err: #ff5a5f;
-  width: 344px;
+  width: 360px;
   box-sizing: border-box;
   padding: 12px;
   border: 1px solid var(--pd-line);
@@ -144,8 +144,18 @@ function injectStyle() {
 .pd-joint__top { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
 .pd-joint__name { font-weight: 650; color: var(--pd-accent); }
 .pd-joint__cur { margin-left: auto; font-variant-numeric: tabular-nums; }
-.pd-joint__row { display: flex; align-items: center; gap: 8px; }
+.pd-joint__row { display: flex; align-items: center; gap: 6px; }
 .pd-joint__slider { flex: 1; accent-color: var(--pd-accent); min-width: 0; }
+.pd-jog {
+  width: 26px; height: 26px; padding: 0; flex: none;
+  border-radius: 6px; border: 1px solid var(--pd-line);
+  background: var(--pd-panel-2); color: var(--pd-text);
+  font: 700 15px/1 system-ui, sans-serif; cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.pd-jog:hover:not(:disabled) { border-color: var(--pd-accent); background: #28333f; }
+.pd-jog:active:not(:disabled) { background: #2f3d4b; }
+.pd-jog:disabled { opacity: .4; cursor: not-allowed; }
 .pd-joint__num {
   width: 76px; padding: 4px 6px; text-align: right;
   border-radius: 6px; border: 1px solid var(--pd-line);
@@ -218,6 +228,15 @@ export function createPendant(options = {}) {
   /** 目标角（弧度），和“当前角”分开存：当前角永远从场景读 */
   const targets = new Array(n).fill(0);
 
+  /** 点动方向：-1 / 0 / +1（按住时持续生效） */
+  const jogDir = new Array(n).fill(0);
+
+  /** 短按一次走多少度 */
+  const JOG_STEP_DEG = 0.5;
+
+  /** 按住超过这么久才算“连续点动”，否则只走一步 */
+  const JOG_HOLD_DELAY = 120;
+
   /* ────────────── DOM ────────────── */
 
   const el = (tag, cls, text) => {
@@ -271,6 +290,16 @@ export function createPendant(options = {}) {
     row.appendChild(top);
 
     const line = el('div', 'pd-joint__row');
+    const btnMinus = el('button', 'pd-jog', '−');
+    btnMinus.type = 'button';
+    btnMinus.dataset.dir = '-1';
+    btnMinus.setAttribute('aria-label', `${joint.name || 'J' + (i + 1)} 负向点动`);
+
+    const btnPlus = el('button', 'pd-jog', '+');
+    btnPlus.type = 'button';
+    btnPlus.dataset.dir = '1';
+    btnPlus.setAttribute('aria-label', `${joint.name || 'J' + (i + 1)} 正向点动`);
+
     const slider = document.createElement('input');
     slider.type = 'range';
     slider.className = 'pd-joint__slider';
@@ -289,13 +318,13 @@ export function createPendant(options = {}) {
     num.value = '0';
     num.setAttribute('aria-label', `${joint.name || 'J' + (i + 1)} 目标角度（度）`);
 
-    line.append(slider, num);
+    line.append(btnMinus, slider, btnPlus, num);
     row.appendChild(line);
     row.appendChild(el('div', 'pd-joint__limit',
       `限位 ${lowerDeg.toFixed(0)}° ~ ${upperDeg.toFixed(0)}°`));
     root.appendChild(row);
 
-    return { row, slider, num, curEl, lowerDeg, upperDeg };
+    return { row, slider, num, curEl, lowerDeg, upperDeg, btnMinus, btnPlus };
   });
 
   const tcp = el('div', 'pd-tcp');
@@ -416,6 +445,8 @@ export function createPendant(options = {}) {
     for (const r of rows) {
       r.slider.disabled = !enabled;
       r.num.disabled = !enabled;
+      r.btnMinus.disabled = !enabled;
+      r.btnPlus.disabled = !enabled;
     }
     speedInput.disabled = estop;
     speedOut.textContent = state.speedPercent + '%';
@@ -453,6 +484,22 @@ export function createPendant(options = {}) {
       for (let i = 0; i < n; i++) {
         const joint = joints[i];
         const cur = readJointAngle(joint);
+
+        // 点动优先：按住超过 JOG_HOLD_DELAY 才连续走，短按由 finish() 走一步
+        if (jogDir[i] !== 0) {
+          const held = performance.now() - (rows[i]._jogT0 || 0);
+          if (held < JOG_HOLD_DELAY) continue;
+
+          const { lower, upper } = limitsOf(joint);
+          const next = clamp(cur + Math.sign(jogDir[i]) * speedAt(i) * ratio * dt, lower, upper);
+          applyJoint(joint, next);
+          targets[i] = next;
+          const deg = next * RAD;
+          rows[i].slider.value = String(deg);
+          rows[i].num.value = deg.toFixed(1);
+          continue;
+        }
+
         const delta = targets[i] - cur;
         const step = speedAt(i) * ratio * dt;
         if (Math.abs(delta) <= step) {
@@ -505,6 +552,52 @@ export function createPendant(options = {}) {
       // 失焦时把越界/非法输入改回合法值
       setTargetDeg(i, parseFloat(r.num.value), { syncUI: true });
     });
+  });
+
+  /* ── 点动：按住连续走，短按走一步 ── */
+  rows.forEach((r, i) => {
+    const start = (dir) => (ev) => {
+      if (state.mode !== 'enabled') return;
+      ev.preventDefault();
+      r._jogT0 = performance.now();
+      jogDir[i] = dir;
+      try { ev.currentTarget.setPointerCapture?.(ev.pointerId); } catch { /* 忽略 */ }
+    };
+    const finish = (dir) => () => {
+      if (jogDir[i] !== dir) return;
+      const held = performance.now() - (r._jogT0 || 0);
+      jogDir[i] = 0;
+      targets[i] = readJointAngle(joints[i]);
+
+      // 短按（没到连续点动的门槛）走固定一步，松手即停
+      if (held < JOG_HOLD_DELAY) {
+        applyJoint(joints[i], targets[i] + dir * JOG_STEP_DEG * DEG);
+        targets[i] = readJointAngle(joints[i]);
+        const deg = targets[i] * RAD;
+        r.slider.value = String(deg);
+        r.num.value = deg.toFixed(1);
+        paint(true);
+      }
+    };
+    r.btnMinus.addEventListener('pointerdown', start(-1));
+    r.btnPlus.addEventListener('pointerdown', start(1));
+    r.btnMinus.addEventListener('pointerup', finish(-1));
+    r.btnPlus.addEventListener('pointerup', finish(1));
+    r.btnMinus.addEventListener('pointercancel', finish(-1));
+    r.btnPlus.addEventListener('pointercancel', finish(1));
+  });
+
+  // 指针在任何地方松开都要停下来，避免"松手了还在走"
+  window.addEventListener('pointerup', () => {
+    for (let i = 0; i < n; i++) {
+      if (jogDir[i] !== 0) {
+        jogDir[i] = 0;
+        targets[i] = readJointAngle(joints[i]);
+      }
+    }
+  });
+  window.addEventListener('blur', () => {
+    for (let i = 0; i < n; i++) jogDir[i] = 0;
   });
 
   speedInput.addEventListener('input', () => {
@@ -588,6 +681,15 @@ export function createPendant(options = {}) {
     root.remove();
   }
 
+  /**
+   * 外部改过机器人姿态后（比如标定页用逆解把工具尖送到标定点），
+   * 必须调一次 sync()，否则面板还记着旧目标，下一帧会把机械臂拽回去。
+   */
+  function sync() {
+    freezeTargets();
+    paint(true);
+  }
+
   /* ────────────── 初始化 ────────────── */
 
   freezeTargets();
@@ -609,6 +711,7 @@ export function createPendant(options = {}) {
     setSpeedPercent,
     setPoseDeg,
     update,
+    sync,
     getState,
     dispose
   };
