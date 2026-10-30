@@ -1,0 +1,10 @@
+﻿# 依赖与产物
+node_modules/
+.npm-cache/
+
+# 预览与临时
+_preview*/
+_preview*
+*.log
+.DS_Store
+Thumbs.db
