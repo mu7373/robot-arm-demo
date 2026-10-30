@@ -15,9 +15,25 @@
 <body>
 <script type="module">
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { robotLoader } from './src/robot/robotLoader.js';
 import { setJointAngle, setAllJoints } from './src/robot/jointControl.js';
+
+const EPS = 1e-9;
+const errors = [];
+function check(ok, label, detail){
+  if(ok) console.log(`✅${label}`);
+  else { console.error(`❌${label}${detail ? '：' + detail : ''}`); errors.push(label); }
+}
+
+// 逐分量比较两个四元数，返回最大绝对差。
+// 不用 angleTo：GLB 里静止旋转是 float32，长度不是精确的 1（如 J3 的 |q|²=0.99999998），
+// 对“完全相同的两个值” angleTo 也会算出 3.7e-4，判断会假报警。
+function quatDiff(a, b){
+  return Math.max(
+    Math.abs(a.x - b.x), Math.abs(a.y - b.y),
+    Math.abs(a.z - b.z), Math.abs(a.w - b.w)
+  );
+}
 
 async function runControlTest(){
   console.log("==== jointControl 自检开始 ====");
@@ -27,62 +43,67 @@ async function runControlTest(){
   if (!resp.ok) throw new Error('读取joint_map.json失败');
   const jointMap = await resp.json();
 
-  // ⭐传入 THREE、GLTFLoader
-  const res = await robotLoader(THREE, GLTFLoader, './assets/robot_articulated.glb', jointMap);
-  const { joints } = res;
+  // robotLoader 内部已 import three / GLTFLoader，只需传「模型路径 + joint_map」
+  const { joints } = await robotLoader('./assets/robot_articulated.glb', jointMap);
   console.log("加载得到关节数量：", joints.length);
 
-  // 检查1：每个关节是否具备必要字段
+  // 检查1：每个关节是否具备必要字段（字段名以 contract.js 为准）
   let ok1 = true;
-  joints.forEach((j,idx)=>{
-    const hasBone = !!j.bone;
+  joints.forEach((j, idx) => {
+    const hasNode = !!j.node;
     const hasQZero = !!j.qZero;
-    const hasMinMax = typeof j.min === "number" && typeof j.max === "number";
-    if(!hasBone || !hasQZero || !hasMinMax){
-      console.error(`【J${idx+1}】字段缺失！bone:${hasBone}, qZero:${hasQZero}, min/max:${hasMinMax}`);
+    const hasLimits = typeof j.lower === "number" && typeof j.upper === "number" && j.lower < j.upper;
+    if(!hasNode || !hasQZero || !hasLimits){
+      console.error(`【J${idx+1}】字段缺失！node:${hasNode}, qZero:${hasQZero}, lower/upper:${hasLimits}`);
       ok1 = false;
     }else{
-      console.log(`【J${idx+1}】限位：min=${j.min.toFixed(3)} rad, max=${j.max.toFixed(3)} rad`);
+      console.log(`【J${idx+1}】${j.name} 限位：${THREE.MathUtils.radToDeg(j.lower).toFixed(3)}° ~ ${THREE.MathUtils.radToDeg(j.upper).toFixed(3)}°`);
     }
-  })
-  if(!ok1){
-    console.error("❌自检失败：关节数据不完整");
-    return;
-  }else{
-    console.log("✅检查1：关节字段齐全");
-  }
+  });
+  check(ok1, "检查1：关节字段齐全");
+  if(!ok1) throw new Error("关节数据不完整，后续检查无法进行");
 
   // 检查2：clamp限位测试（核心！超上限、超下限、正常值）
   const j0 = joints[0];
-  const overMax = j0.max + 0.5;
-  const underMin = j0.min - 0.5;
-  const safeVal = (j0.min + j0.max)/2;
+  const overMax  = j0.upper + 0.5;
+  const underMin = j0.lower - 0.5;
+  const safeVal  = (j0.lower + j0.upper) / 2;
 
-  // ⭐第一个参数传入THREE
-  setJointAngle(THREE, j0, overMax);
-  let afterOver = j0.bone.quaternion.clone();
-  setJointAngle(THREE, j0, underMin);
-  let afterUnder = j0.bone.quaternion.clone();
-  setJointAngle(THREE, j0, safeVal);
-  let afterSafe = j0.bone.quaternion.clone();
-  console.log("✅检查2：clamp限位执行完成，不会报错崩溃");
+  const aOver  = setJointAngle(THREE, j0, overMax);
+  const aUnder = setJointAngle(THREE, j0, underMin);
+  const aSafe  = setJointAngle(THREE, j0, safeVal);
 
-  // 检查3：批量设置全部关节
-  const midThetas = joints.map(j=>(j.min + j.max)/2);
-  setAllJoints(THREE, joints, midThetas);
-  console.log("✅检查3：批量setAllJoints执行完成");
+  check(Math.abs(aOver - j0.upper) < EPS,  `检查2-a：超上限被钳到 ${j0.upper.toFixed(6)}`, `实际 ${aOver}`);
+  check(Math.abs(aUnder - j0.lower) < EPS, `检查2-b：超下限被钳到 ${j0.lower.toFixed(6)}`, `实际 ${aUnder}`);
+  check(Math.abs(aSafe - safeVal) < EPS,   `检查2-c：限位内正常值原样生效`, `实际 ${aSafe}`);
+
+  // 检查2-d：姿态必须是 qZero ⊗ Rz(θ)，0 弧度时要还原成原始静止姿态
+  setJointAngle(THREE, j0, 0);
+  check(quatDiff(j0.node.quaternion, j0.qZero) < 1e-6, "检查2-d：0 弧度时节点回到 qZero 静止姿态");
+
+  // 检查3：批量设置全部关节，逐个核对生效值
+  const midThetas = joints.map(j => (j.lower + j.upper) / 2);
+  const applied = setAllJoints(THREE, joints, midThetas);
+  const ok3 = joints.every((j, i) =>
+    Math.abs(applied[i] - midThetas[i]) < EPS &&
+    Math.abs(j.angle - midThetas[i]) < EPS
+  );
+  check(ok3, "检查3：批量 setAllJoints 全部关节生效");
 
   // 检查4：回零测试，全部0弧度
-  const zeroThetas = joints.map(()=>0);
-  setAllJoints(THREE, joints, zeroThetas);
-  console.log("✅检查4：回零执行完成");
+  setAllJoints(THREE, joints, joints.map(() => 0));
+  const ok4 = joints.every(j => Math.abs(j.angle) < EPS && quatDiff(j.node.quaternion, j.qZero) < 1e-6);
+  check(ok4, "检查4：回零后所有节点姿态等于 qZero");
 
+  if(errors.length){
+    throw new Error(`自检未通过 ${errors.length} 项：${errors.join('；')}`);
+  }
   console.log("==== 🟢 jointControl 全部自检通过，可以上主页面index.html使用 ====");
 }
 
-runControlTest().catch(e=>{
-  console.error("自检异常：",e);
-})
+runControlTest().catch(e => {
+  console.error("自检异常：", e);
+});
 </script>
 </body>
 </html>

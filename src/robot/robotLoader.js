@@ -21,6 +21,16 @@ function collectNames(root) {
  * @returns {Promise<{robot:THREE.Object3D,joints:Array,tcp:THREE.Object3D}>}
  */
 export async function robotLoader(glbUrl, jointMap) {
+  // 常见误用：多传了 THREE、GLTFLoader 两个参数 —— 本文件自己已经 import，不需要再传。
+  // 若 glbUrl 不是字符串，three 内部会抛出难以定位的 "url.lastIndexOf is not a function"。
+  if (typeof glbUrl !== 'string') {
+    throw new Error(
+      '[robotLoader] 第一个参数必须是 GLB 路径字符串，实际收到 ' +
+      Object.prototype.toString.call(glbUrl) + '。\n' +
+      "          正确用法：robotLoader('./assets/robot_articulated.glb', jointMap)"
+    );
+  }
+
   const loader = new GLTFLoader();
   const gltf = await loader.loadAsync(glbUrl);
   const robot = gltf.scene;
