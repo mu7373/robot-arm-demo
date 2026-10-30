@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<link rel="icon" href="data:," />
+<title>实验一 · B 侧分析工作台（FK 验证 / MOVJ / 轨迹 / 可达域）</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; display: flex; height: 100vh; overflow: hidden;
+    font: 13px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    background: #14161a; color: #dfe3e8;
+  }
+  #view { flex: 1; position: relative; min-width: 0; }
+  #view canvas { display: block; }
+  #hint {
+    position: absolute; left: 12px; top: 10px; font-size: 12px;
+    color: #8b95a1; pointer-events: none;
+  }
+  aside {
+    width: 460px; flex: 0 0 460px; overflow-y: auto; padding: 14px 16px 40px;
+    background: #1a1d23; border-left: 1px solid #2a2f37;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; color: #fff; }
+  h2 {
+    font-size: 12px; margin: 18px 0 8px; color: #7f8b99; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+    border-bottom: 1px solid #272c34; padding-bottom: 5px;
+  }
+  p.sub { margin: 0 0 12px; color: #78828f; font-size: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  button {
+    flex: 1 1 auto; min-width: 118px; padding: 8px 10px; cursor: pointer;
+    background: #262c35; color: #dfe3e8; border: 1px solid #333b46;
+    border-radius: 6px; font: inherit; transition: .15s;
+  }
+  button:hover:not(:disabled) { background: #2f3742; border-color: #46515f; }
+  button:disabled { opacity: .42; cursor: not-allowed; }
+  button.primary { background: #1f4f7a; border-color: #2a6a9e; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #26608f; }
+  #log {
+    height: 210px; overflow-y: auto; margin-top: 6px; padding: 9px 10px;
+    background: #0f1115; border: 1px solid #272c34; border-radius: 6px;
+    font: 11.5px/1.55 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap;
+    color: #b9c2cd;
+  }
+  #log .ok { color: #63d68a; }
+  #log .bad { color: #ff7b72; }
+  #log .dim { color: #6b7684; }
+  #log .hl { color: #7ec8ff; }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 12px; }
+  .kv span { color: #8b95a1; }
+  .kv b { color: #e8edf3; font-weight: 600; font-variant-numeric: tabular-nums; }
+  canvas.chart {
+    width: 100%; height: 150px; display: block; margin-top: 6px;
+    background: #0f1115; border: 1px solid #272c34; border-radius: 6px;
+  }
+  .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 10px;
+    font-size: 11px; font-weight: 600;
+  }
+  .badge.pass { background: #14361f; color: #63d68a; border: 1px solid #235c33; }
+  .badge.fail { background: #3a1a1a; color: #ff7b72; border: 1px solid #6b2a2a; }
+  .badge.idle { background: #232830; color: #7f8b99; border: 1px solid #333b46; }
+  .tip { color: #6b7684; font-size: 11.5px; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<div id="view"><div id="hint">拖动旋转 · 滚轮缩放</div></div>
+
+<aside>
+  <h1>B 侧分析工作台</h1>
+  <p class="sub">
+    正运动学三档验证 · MOVJ 关节插值 · 轨迹采样 · 可达区域。<br />
+    <span style="color:#8b95a1">用 <code>node server.mjs</code> 起服务后访问，别用 file:// 打开（ES Module 跨域会被拦）。</span>
+  </p>
+
+  <h2>0 · 加载</h2>
+  <div class="row">
+    <button id="btnLoad" class="primary">加载模型 + 数据</button>
+  </div>
+  <div class="kv">
+    <span>模型节点</span><b id="kNodes">—</b>
+    <span>识别关节</span><b id="kJoints">—</b>
+    <span>零位 TCP (mm)</span><b id="kTCP">—</b>
+    <span>转轴（实测）</span><b id="kAxis">—</b>
+  </div>
+
+  <h2>1 · 正运动学三档验证</h2>
+  <div class="row">
+    <button id="btnVerify" disabled>运行三档验证</button>
+  </div>
+  <div class="kv">
+    <span>结论</span><b id="kVerify"><span class="badge idle">未运行</span></b>
+    <span>一档 零位误差</span><b id="kT1">—</b>
+    <span>二档 单关节最大误差</span><b id="kT2">—</b>
+    <span>三档 随机100组位置</span><b id="kT3">—</b>
+  </div>
+  <p class="tip">判据：位置 &lt; 1e-9 模型单位（1u = 100 mm），姿态 &lt; 1e-6°。</p>
+
+  <h2>2 · 示教程序（MOVJ 空中画圆）</h2>
+  <div class="row">
+    <button id="btnProgram" disabled>载入 12 个示教位姿</button>
+    <button id="btnPlay" disabled>连续执行</button>
+    <button id="btnStop" disabled>停止</button>
+  </div>
+  <div class="kv">
+    <span>程序段数 / 总时长</span><b id="kProg">—</b>
+    <span>相邻位姿最大变化</span><b id="kDelta">—</b>
+    <span>段间连续（应为 0）</span><b id="kJump">—</b>
+    <span>速度倍率</span><b id="kScale">100%</b>
+  </div>
+  <p class="tip">MOVJ 在关节空间里插值，末端走的是弧线不是直线——这正是下面偏差曲线的来源。</p>
+
+  <h2>3 · 轨迹分析（要求 c）</h2>
+  <div class="row">
+    <button id="btnAnalyze" disabled>分析刚才这一趟</button>
+    <button id="btnExport" disabled>导出 samples.json</button>
+  </div>
+  <div class="kv">
+    <span>采样点 / 时长</span><b id="kSamp">—</b>
+    <span>路径长度（理想圆）</span><b id="kPath">—</b>
+    <span>峰值 / 平均速度</span><b id="kSpeed">—</b>
+    <span>偏差 最大 / RMS</span><b id="kDev">—</b>
+  </div>
+  <canvas class="chart" id="chSpeed" width="880" height="300"></canvas>
+  <canvas class="chart" id="chDev" width="880" height="300"></canvas>
+
+  <h2>4 · 可达区域（要求 d）</h2>
+  <div class="row">
+    <button id="btnWorkspace" disabled>蒙特卡洛 60000 组</button>
+  </div>
+  <div class="kv">
+    <span>样本数</span><b id="kWsN">—</b>
+    <span>水平半径</span><b id="kWsR">—</b>
+    <span>高度范围</span><b id="kWsY">—</b>
+    <span>工作面上方占比</span><b id="kWsA">—</b>
+    <span>体积近似</span><b id="kWsV">—</b>
+    <span>内腔空洞</span><b id="kWsH">—</b>
+  </div>
+  <canvas class="chart" id="chWs" width="880" height="420"></canvas>
+
+  <h2>日志</h2>
+  <div id="log"></div>
+</aside>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./node_modules/three/build/three.module.js",
+    "three/addons/": "./node_modules/three/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+import { createModel, forwardKinematics, degToRad, radToDeg, JOINT_NAMES } from './src/analysis/fk.js';
+import { verifyFK, formatReport } from './src/analysis/fkVerify.js';
+import { buildMovjProgram, sampleProgram, checkProgram } from './src/analysis/interp.js';
+import { SampleRecorder, analyzeSamples } from './src/analysis/recorder.js';
+import { analyzeTrajectory, circleTargets } from './src/analysis/trajectory.js';
+import { analyzeWorkspace } from './src/analysis/workspace.js';
+
+const MM = 100;                     // 1 模型单位 = 100 mm
+const MODEL_URL = './assets/robot-model.json';
+const GLB_URL = './assets/robot_articulated.glb';
+const PROGRAM_URL = './assets/program-circle.json';
+
+const S = {
+  model: null, robot: null, joints: [], tcp: null,
+  program: null, playing: false, t0: 0, recorder: null,
+  circle: null, lastSamples: null, ws: null
+};
+
+const $ = (id) => document.getElementById(id);
+const logLines = [];
+
+function log(msg, cls = '') {
+  const el = $('log');
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = msg + '\n';
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+function clearLog() { $('log').innerHTML = ''; }
+
+/* ───────────── 三维场景 ───────────── */
+const viewEl = $('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(viewEl.clientWidth, viewEl.clientHeight);
+renderer.shadowMap.enabled = true;
+viewEl.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161a);
+scene.fog = new THREE.Fog(0x14161a, 26, 52);
+
+const camera = new THREE.PerspectiveCamera(42, viewEl.clientWidth / viewEl.clientHeight, 0.1, 300);
+camera.position.set(14, 12, 16);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(-1, 7, -1);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI * 0.495;
+
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x22262c, 1.1));
+const key = new THREE.DirectionalLight(0xffffff, 2.0);
+key.position.set(9, 16, 10);
+key.castShadow = true;
+key.shadow.mapSize.set(1024, 1024);
+key.shadow.camera.near = 1; key.shadow.camera.far = 60;
+key.shadow.camera.left = -18; key.shadow.camera.right = 18;
+key.shadow.camera.top = 18; key.shadow.camera.bottom = -18;
+scene.add(key);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(60, 60),
+  new THREE.MeshStandardMaterial({ color: 0x1d2128, roughness: 1, metalness: 0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = 1.095;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(40, 40, 0x2a3038, 0x20252c);
+grid.position.y = 1.0955;
+scene.add(grid);
+
+const trajLine = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([]),
+  new THREE.LineBasicMaterial({ color: 0x53d769 })
+);
+scene.add(trajLine);
+
+const tcpDot = new THREE.Mesh(
+  new THREE.SphereGeometry(0.13, 16, 12),
+  new THREE.MeshBasicMaterial({ color: 0xff9f43 })
+);
+scene.add(tcpDot);
+
+const wsPoints = new THREE.Points(
+  new THREE.BufferGeometry(),
+  new THREE.PointsMaterial({ color: 0x4a7bd8, size: 0.07, transparent: true, opacity: 0.55 })
+);
+wsPoints.visible = false;
+scene.add(wsPoints);
+
+function resize() {
+  const w = viewEl.clientWidth, h = viewEl.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+/* ───────────── 关节驱动（与 fk.js 用同一份事实源） ───────────── */
+const _q = new THREE.Quaternion();
+
+function applyJoint(i, rad) {
+  const j = S.model.joints[i];
+  const node = S.joints[i];
+  const a = Math.min(S.model.upper[i], Math.max(S.model.lower[i], rad));
+  node.quaternion.copy(new THREE.Quaternion(j.qZero[0], j.qZero[1], j.qZero[2], j.qZero[3]));
+  _q.setFromAxisAngle(new THREE.Vector3(j.axis[0], j.axis[1], j.axis[2]), a);
+  node.quaternion.multiply(_q);
+}
+
+function applyPose(qRad) {
+  for (let i = 0; i < qRad.length; i++) applyJoint(i, qRad[i]);
+  S.robot.updateMatrixWorld(true);
+}
+
+/* ───────────── 加载 ───────────── */
+$('btnLoad').onclick = async () => {
+  const btn = $('btnLoad');
+  btn.disabled = true;
+  btn.textContent = '加载中…';
+  clearLog();
+  try {
+    const [modelJson, gltf] = await Promise.all([
+      fetch(MODEL_URL, { cache: 'no-store' }).then((r) => {
+        if (!r.ok) throw new Error(`${MODEL_URL} → HTTP ${r.status}`);
+        return r.json();
+      }),
+      new GLTFLoader().loadAsync(GLB_URL)
+    ]);
+
+    S.model = createModel(modelJson);
+    S.robot = gltf.scene;
+    S.robot.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    scene.add(S.robot);
+
+    S.joints = S.model.joints.map((j) => {
+      const n = S.robot.getObjectByName(j.node, true);
+      if (!n) throw new Error(`GLB 里找不到关节节点 ${j.node}`);
+      return n;
+    });
+    S.tcp = S.robot.getObjectByName(S.model.tcpNode, true);
+    if (!S.tcp) throw new Error(`GLB 里找不到末端节点 ${S.model.tcpNode}`);
+
+    applyPose(JOINT_NAMES.map(() => 0));
+    const zero = forwardKinematics(S.model, [0, 0, 0, 0, 0]).tcp.p;
+
+    $('kNodes').textContent = `${modelJson.nodes.length} 个`;
+    $('kJoints').textContent = S.model.joints.map((j) => j.name).join(' ');
+    $('kTCP').textContent = zero.map((v) => (v * MM).toFixed(1)).join(', ');
+    $('kAxis').textContent = '全部局部 +Y';
+
+    log('模型加载完成', 'ok');
+    log(`  ${GLB_URL} → 节点 ${modelJson.nodes.length}，关节 ${S.model.joints.length}`, 'dim');
+    log(`  零位 TCP = (${zero.map((v) => (v * MM).toFixed(1)).join(', ')}) mm`, 'dim');
+    log(`  转轴取 robot-model.json 的实测值：${S.model.joints.map((j) => j.name + '=' + j.axis.join('')).join(' ')}`, 'dim');
+    log('  注：不是 joint_map.json 里写的 +Z。判定证据见 src/analysis/axisDecision.md', 'dim');
+
+    ['btnVerify', 'btnProgram', 'btnWorkspace'].forEach((id) => { $(id).disabled = false; });
+    btn.textContent = '重新加载';
+  } catch (e) {
+    log('加载失败：' + e.message, 'bad');
+    log('  确认已用 node server.mjs 起服务、且已 npm install（node_modules 里有 three）', 'dim');
+    btn.textContent = '加载模型 + 数据';
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+/* ───────────── 三档验证 ───────────── */
+$('btnVerify').onclick = () => {
+  try {
+    const t = performance.now();
+    const res = verifyFK(S.model, S.robot, { randomCount: 100 });
+    const ms = (performance.now() - t).toFixed(0);
+
+    $('kVerify').innerHTML = res.pass
+      ? '<span class="badge pass">PASS</span>'
+      : '<span class="badge fail">FAIL</span>';
+    $('kT1').textContent = '基准 ' + res.tier1.errVsBaseline.toExponential(2) +
+      ' / 场景树 ' + res.tier1.errVsScene.toExponential(2) + ' u';
+    $('kT2').textContent = res.tier2.maxErr.toExponential(2) + ' u';
+    $('kT3').textContent = res.tier3.maxPosErr.toExponential(2) + ' u / ' +
+      res.tier3.maxRpyErrDeg.toExponential(1) + '°';
+
+    clearLog();
+    formatReport(res).split('\n').forEach((line) => {
+      log(line, line.includes('FAIL') ? 'bad' : line.includes('PASS') ? 'ok' : '');
+    });
+    log(`耗时 ${ms} ms`, 'dim');
+  } catch (e) {
+    log('验证出错：' + e.message, 'bad');
+  }
+};
+
+/* ───────────── 示教程序 ───────────── */
+$('btnProgram').onclick = async () => {
+  try {
+    const raw = await fetch(PROGRAM_URL, { cache: 'no-store' }).then((r) => {
+      if (!r.ok) throw new Error(`${PROGRAM_URL} → HTTP ${r.status}`);
+      return r.json();
+    });
+
+    const posesRad = raw.posesDeg.map((p) => p.map(degToRad));
+    S.circle = {
+      center: raw.circle.center,
+      radius: raw.circle.radius,
+      normal: raw.circle.normal,
+      u: raw.circle.u,
+      count: posesRad.length
+    };
+
+    S.program = buildMovjProgram(posesRad, { loop: true, accelRatio: 0.2, speedScale: 1 });
+    const limits = { lower: S.model.lower, upper: S.model.upper };
+    const chk = checkProgram(S.program, limits);
+
+    // 「相邻位姿最大变化」= 相邻两个示教位姿之间关节角的改变量（决定每段走多久）
+    // 「段间连续」= 上一段终点与下一段起点的差值，MOVJ 串联后它必须是 0，
+    //              不为 0 说明程序拼接处有跳变，机械臂会瞬移
+    const maxDeltaDeg = Math.max(...S.program.segments.map((s) => s.maxDeltaDeg));
+    $('kProg').textContent = `${S.program.segments.length} 段 / ${S.program.totalDuration.toFixed(2)} s`;
+    $('kDelta').textContent = maxDeltaDeg.toFixed(2) + '°';
+    $('kJump').textContent = chk.maxJumpDeg.toFixed(6) + '°';
+    $('kJump').style.color = chk.maxJumpDeg < 1e-9 ? '#63d68a' : '#ff7b72';
+    $('kScale').textContent = Math.round(S.program.speedScale * 100) + '%';
+
+    clearLog();
+    log(`已载入 ${posesRad.length} 个示教位姿（要求 b：≥4 个）`, 'ok');
+    log(`  圆心 (${raw.circle.center.map((v) => (v * MM).toFixed(0)).join(', ')}) mm，` +
+        `半径 ${(raw.circle.radius * MM).toFixed(0)} mm`, 'dim');
+    log(`  程序 ${S.program.segments.length} 段，总时长 ${S.program.totalDuration.toFixed(2)} s`, 'dim');
+    log(`  相邻位姿最大变化 ${maxDeltaDeg.toFixed(2)}°（决定每段时长，按 90°/s 折算）`, 'dim');
+    log(`  段间连续 ${chk.maxJumpDeg.toFixed(6)}°（MOVJ 串联必须为 0，否则拼接处会瞬移）`,
+        chk.maxJumpDeg < 1e-9 ? 'ok' : 'bad');
+    log(`  限位检查 ${chk.ok ? '全部通过' : '有问题：' + chk.issues.join('；')}`, chk.ok ? 'dim' : 'bad');
+
+    ['btnPlay', 'btnStop'].forEach((id) => { $(id).disabled = false; });
+  } catch (e) {
+    log('载入示教程序失败：' + e.message, 'bad');
+  }
+};
+
+$('btnPlay').onclick = () => {
+  if (!S.program) return;
+  S.recorder = new SampleRecorder({ maxSamples: 40000 });
+  S.recorder.start({ program: '空中画圆 MOVJ', poses: S.program.posesRad.length, note: '要求 c 的原始数据' });
+  S.playing = true;
+  S.t0 = performance.now();
+  $('btnPlay').disabled = true;
+  $('btnStop').disabled = false;
+  log('开始连续执行，逐帧采样中…', 'hl');
+};
+
+$('btnStop').onclick = () => {
+  S.playing = false;
+  $('btnPlay').disabled = false;
+  if (S.recorder) {
+    S.lastSamples = S.recorder.stop();
+    $('btnAnalyze').disabled = false;
+    $('btnExport').disabled = false;
+    log(`执行结束，采到 ${S.lastSamples.samples.length} 帧`, 'ok');
+  }
+};
+
+/* ───────────── 轨迹分析 ───────────── */
+$('btnAnalyze').onclick = () => {
+  try {
+    const samples = S.lastSamples?.samples ?? [];
+    if (samples.length < 3) { log('样本太少，先跑一遍程序', 'bad'); return; }
+
+    const stats = analyzeSamples(samples, { smooth: 5 });
+    const geo = analyzeTrajectory(samples, S.circle);
+
+    $('kSamp').textContent = `${stats.sampleCount} 点 / ${stats.duration.toFixed(2)} s`;
+    $('kPath').textContent = `${(stats.pathLength * MM).toFixed(1)} mm（${(geo.shape.idealLength * MM).toFixed(1)}）`;
+    $('kSpeed').textContent = `${(stats.peakSpeed * MM).toFixed(1)} / ${(stats.meanSpeed * MM).toFixed(1)} mm/s`;
+    $('kDev').textContent = `${(geo.deviation.max * MM).toFixed(2)} / ${(geo.deviation.rms * MM).toFixed(2)} mm`;
+
+    clearLog();
+    log('要求 c 轨迹分析', 'ok');
+    log(`  采样 ${stats.sampleCount} 点，时长 ${stats.duration.toFixed(2)} s，估算 ${(stats.sampleCount / Math.max(stats.duration, 1e-6)).toFixed(0)} Hz`, 'dim');
+    log(`  路径长度 ${(stats.pathLength * MM).toFixed(1)} mm，理想整圆 ${(geo.shape.idealLength * MM).toFixed(1)} mm（比值 ${geo.shape.ratio.toFixed(4)}）`, 'dim');
+    log(`  峰值速度 ${(stats.peakSpeed * MM).toFixed(1)} mm/s，平均 ${(stats.meanSpeed * MM).toFixed(1)} mm/s`, 'dim');
+    log(`  峰值加速度 ${(stats.peakAccel * MM).toFixed(0)} mm/s²`, 'dim');
+    log(`  相对理想圆偏差：最大 ${(geo.deviation.max * MM).toFixed(2)} mm，均值 ${(geo.deviation.mean * MM).toFixed(2)} mm，RMS ${(geo.deviation.rms * MM).toFixed(2)} mm`, 'dim');
+    log('  偏差不是 bug：MOVJ 在关节空间线性、末端在笛卡尔空间走弧线，弦切差就是这个量级', 'dim');
+
+    drawCurve($('chSpeed'), stats.t, stats.speed.map((v) => v * MM), {
+      title: '末端速度-时间', unit: 'mm/s', color: '#ff9f43',
+      hlines: [{ y: stats.meanSpeed * MM, color: '#5a6672', label: '平均' }]
+    });
+    drawCurve($('chDev'), geo.deviation.t, geo.deviation.dev.map((v) => v * MM), {
+      title: '相对理想圆的偏差-时间', unit: 'mm', color: '#7ec8ff',
+      hlines: [{ y: geo.deviation.rms * MM, color: '#5a6672', label: 'RMS' }]
+    });
+  } catch (e) {
+    log('分析出错：' + e.message, 'bad');
+  }
+};
+
+$('btnExport').onclick = () => {
+  const data = S.lastSamples;
+  if (!data) return;
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'samples.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  log('已导出 samples.json（要求 c 的可复现原始数据）', 'ok');
+};
+
+/* ───────────── 可达区域 ───────────── */
+$('btnWorkspace').onclick = () => {
+  try {
+    const t = performance.now();
+    const ws = analyzeWorkspace(S.model, { count: 60000, seed: 20240607, groundY: 1.095 });
+    S.ws = ws;
+    const ms = (performance.now() - t).toFixed(0);
+    const s = ws.stats;
+
+    $('kWsN').textContent = s.count.toLocaleString();
+    $('kWsR').textContent = `${(s.radiusMin * MM).toFixed(0)} ~ ${(s.radiusMax * MM).toFixed(0)} mm`;
+    $('kWsY').textContent = `${(s.min[1] * MM).toFixed(0)} ~ ${(s.max[1] * MM).toFixed(0)} mm`;
+    $('kWsA').textContent = (s.aboveGround * 100).toFixed(1) + '%';
+    $('kWsV').textContent = (s.volumeApprox * (MM / 1000) ** 3).toFixed(3) + ' m³';
+    $('kWsH').textContent = `${ws.holes.holeCount} 处 / ${ws.holes.holeCells} 格`;
+
+    clearLog();
+    log('要求 d 可达区域分析（蒙特卡洛）', 'ok');
+    log(`  采样 ${s.count} 组关节角（限位内均匀分布，种子 20240607）`, 'dim');
+    log(`  包围盒 x ${(s.min[0] * MM).toFixed(0)}~${(s.max[0] * MM).toFixed(0)}，` +
+        `y ${(s.min[1] * MM).toFixed(0)}~${(s.max[1] * MM).toFixed(0)}，` +
+        `z ${(s.min[2] * MM).toFixed(0)}~${(s.max[2] * MM).toFixed(0)} mm`, 'dim');
+    log(`  x 方向厚度 ${(s.size[0] * MM).toFixed(0)} mm —— 转轴近似平行，可达域是竖直薄片`, 'hl');
+    log(`  水平半径 ${(s.radiusMin * MM).toFixed(0)}~${(s.radiusMax * MM).toFixed(0)} mm（2%/98% 分位 ${(s.radiusP2 * MM).toFixed(0)}~${(s.radiusP98 * MM).toFixed(0)}）`, 'dim');
+    log(`  工作面上方 ${(s.aboveGround * 100).toFixed(1)}%，体积约 ${(s.volumeApprox * (MM / 1000) ** 3).toFixed(3)} m³`, 'dim');
+    log(`  切片 x≈${(ws.sliceX * MM).toFixed(0)} mm 处内腔空洞 ${ws.holes.holeCount} 处（${ws.holes.holeCells} 格 × ${ws.grid.cell}u）`, 'dim');
+    log(`  耗时 ${ms} ms`, 'dim');
+
+    const pos = new Float32Array(ws.cloud.points.length);
+    for (let i = 0; i < pos.length; i++) pos[i] = ws.cloud.points[i];
+    wsPoints.geometry.dispose();
+    wsPoints.geometry = new THREE.BufferGeometry();
+    wsPoints.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    wsPoints.visible = true;
+
+    drawOccupancy(ws);
+  } catch (e) {
+    log('可达区域出错：' + e.message, 'bad');
+  }
+};
+
+/* ───────────── 画图（原生 canvas，不引第三方图库） ───────────── */
+function ctxOf(canvas) {
+  const dpr = Math.min(devicePixelRatio, 2);
+  const w = canvas.clientWidth || canvas.width;
+  const h = canvas.clientHeight || canvas.height;
+  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+function drawCurve(canvas, xs, ys, opt) {
+  const { ctx, w, h } = ctxOf(canvas);
+  const pad = { l: 52, r: 14, t: 26, b: 30 };
+  const x0 = pad.l, x1 = w - pad.r, y0 = pad.t, y1 = h - pad.b;
+  if (!xs.length) return;
+
+  let xmin = Math.min(...xs), xmax = Math.max(...xs);
+  let ymax = Math.max(...ys, ...(opt.hlines ?? []).map((l) => l.y));
+  if (xmax - xmin < 1e-9) xmax = xmin + 1;
+  if (ymax <= 0) ymax = 1;
+  ymax *= 1.12;
+  const X = (v) => x0 + ((v - xmin) / (xmax - xmin)) * (x1 - x0);
+  const Y = (v) => y1 - (v / ymax) * (y1 - y0);
+
+  ctx.strokeStyle = '#272c34';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = y0 + ((y1 - y0) * i) / 4;
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+  }
+
+  for (const l of opt.hlines ?? []) {
+    ctx.strokeStyle = l.color; ctx.setLineDash([4, 4]); ctx.beginPath();
+    ctx.moveTo(x0, Y(l.y)); ctx.lineTo(x1, Y(l.y)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = l.color; ctx.font = '11px Consolas, monospace';
+    ctx.fillText(`${l.label} ${l.y.toFixed(1)}`, x1 - 78, Y(l.y) - 4);
+  }
+
+  ctx.strokeStyle = opt.color; ctx.lineWidth = 1.6; ctx.beginPath();
+  xs.forEach((x, i) => { const px = X(x), py = Y(ys[i]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  ctx.stroke();
+
+  ctx.fillStyle = '#dfe3e8'; ctx.font = '600 12px "Microsoft YaHei", sans-serif';
+  ctx.fillText(`${opt.title}（${opt.unit}）`, x0, 16);
+  ctx.fillStyle = '#7f8b99'; ctx.font = '11px Consolas, monospace';
+  ctx.fillText(xmin.toFixed(2), x0 - 6, y1 + 16);
+  ctx.fillText(xmax.toFixed(2) + ' s', x1 - 34, y1 + 16);
+  ctx.fillText(ymax.toFixed(0), 6, y0 + 4);
+}
+
+function drawOccupancy(ws) {
+  const canvas = $('chWs');
+  const { ctx, w, h } = ctxOf(canvas);
+  const pad = { l: 46, r: 14, t: 26, b: 34 };
+  const x0 = pad.l, x1 = w - pad.r, y0 = pad.t, y1 = h - pad.b;
+  const g = ws.grid;
+  const sx = (x1 - x0) / g.nx, sy = (y1 - y0) / g.ny;
+
+  ctx.fillStyle = '#dfe3e8';
+  ctx.font = '600 12px "Microsoft YaHei", sans-serif';
+  ctx.fillText(`工作平面截面占位图（x≈${(ws.sliceX * MM).toFixed(0)} mm 层，横轴 Z / 纵轴 Y，mm）`, pad.l, 16);
+
+  // 三次分层：被外边界围住的区域画成浅蓝（含零星没采到的空格——那是采样噪声，不是空洞），
+  // 只有 findHoles 判定出来的连通空洞（≥minCells 格）才画橙色。
+  // 早先这里把"region 内所有空格"都画成橙色，结果满屏橙点，像几十个洞，实际全是采样稀疏。
+  const region = ws.holes.region;
+  for (let j = 0; j < g.ny; j++) {
+    for (let i = 0; i < g.nx; i++) {
+      const k = j * g.nx + i;
+      let fill = null;
+      if (g.occ[k]) fill = '#2f4f7f';
+      else if (ws.holes.holes[k]) fill = '#d9822b';
+      else if (region[k]) fill = '#bcd3ee';
+      if (fill) {
+        ctx.fillStyle = fill;
+        ctx.fillRect(x0 + i * sx, y1 - (j + 1) * sy, sx + 0.4, sy + 0.4);
+      }
+    }
+  }
+
+  ctx.strokeStyle = '#3a424e';
+  ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  ctx.fillStyle = '#7f8b99';
+  ctx.font = '11px Consolas, monospace';
+  ctx.fillText(((g.x0) * MM).toFixed(0), x0 - 4, y1 + 16);
+  ctx.fillText(((g.x0 + g.nx * g.cell) * MM).toFixed(0), x1 - 40, y1 + 16);
+  ctx.fillText('Z', (x0 + x1) / 2, y1 + 30);
+  ctx.save();
+  ctx.translate(12, (y0 + y1) / 2); ctx.rotate(-Math.PI / 2);
+  ctx.fillText('Y', 0, 0); ctx.restore();
+  ctx.fillText(((g.y0 + g.ny * g.cell) * MM).toFixed(0), 6, y0 + 4);
+  ctx.fillText((g.y0 * MM).toFixed(0), 6, y1);
+
+  ctx.fillStyle = '#2f4f7f'; ctx.fillRect(x1 - 150, y0 + 6, 10, 10);
+  ctx.fillStyle = '#8b95a1'; ctx.font = '11px "Microsoft YaHei", sans-serif';
+  ctx.fillText('可达', x1 - 136, y0 + 15);
+  if (ws.holes.holeCells > 0) {
+    ctx.fillStyle = '#d9822b'; ctx.fillRect(x1 - 150, y0 + 22, 10, 10);
+    ctx.fillStyle = '#8b95a1';
+    ctx.fillText(`不可达 ${ws.holes.holeCount} 处`, x1 - 136, y0 + 31);
+  }
+}
+
+/* ───────────── 动画循环 ───────────── */
+let trajPts = [];
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  if (S.playing && S.program) {
+    const t = (performance.now() - S.t0) / 1000;
+    const st = sampleProgram(S.program, t);
+    applyPose(st.q);
+
+    const p = forwardKinematics(S.model, st.q).tcp.p;
+    tcpDot.position.set(p[0], p[1], p[2]);
+
+    if (S.recorder?.isRecording) {
+      S.recorder.push({
+        t,
+        jointsRad: st.q.slice(),
+        tcp: p,
+        seg: st.segIndex,
+        s: st.s
+      });
+    }
+
+    trajPts.push(new THREE.Vector3(p[0], p[1], p[2]));
+    if (trajPts.length > 4000) trajPts = trajPts.slice(-4000);
+    trajLine.geometry.dispose();
+    trajLine.geometry = new THREE.BufferGeometry().setFromPoints(trajPts);
+
+    if (t >= S.program.totalDuration) {
+      S.playing = false;
+      $('btnPlay').disabled = false;
+      if (S.recorder?.isRecording) {
+        S.lastSamples = S.recorder.stop();
+        $('btnAnalyze').disabled = false;
+        $('btnExport').disabled = false;
+        log(`程序执行完成，采样 ${S.lastSamples.samples.length} 帧 —— 点"分析刚才这一趟"`, 'ok');
+      }
+    }
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+log('B 侧分析工作台就绪', 'hl');
+log('点"加载模型 + 数据"开始；建议顺序：三档验证 → 示教程序 → 连续执行 → 轨迹分析 → 可达区域', 'dim');
+</script>
+</body>
+</html>

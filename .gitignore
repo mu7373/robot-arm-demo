@@ -1,0 +1,17 @@
+﻿# 依赖与产物
+node_modules/
+.npm-cache/
+
+# 预览与临时
+_preview*/
+_preview*
+*.log
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+
+# 个人答辩材料，不进公开仓库
+答辩要点.docx
