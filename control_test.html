@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh‑CN">
+<head>
+<meta charset="UTF‑8">
+<title>jointControl 自检</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { robotLoader } from './src/robot/robotLoader.js';
+import { setJointAngle, setAllJoints } from './src/robot/jointControl.js';
+
+async function runControlTest(){
+  console.log("==== jointControl 自检开始 ====");
+
+  // 读取joint_map.json
+  const resp = await fetch('./assets/joint_map.json');
+  if (!resp.ok) throw new Error('读取joint_map.json失败');
+  const jointMap = await resp.json();
+
+  // ⭐传入 THREE、GLTFLoader
+  const res = await robotLoader(THREE, GLTFLoader, './assets/robot_articulated.glb', jointMap);
+  const { joints } = res;
+  console.log("加载得到关节数量：", joints.length);
+
+  // 检查1：每个关节是否具备必要字段
+  let ok1 = true;
+  joints.forEach((j,idx)=>{
+    const hasBone = !!j.bone;
+    const hasQZero = !!j.qZero;
+    const hasMinMax = typeof j.min === "number" && typeof j.max === "number";
+    if(!hasBone || !hasQZero || !hasMinMax){
+      console.error(`【J${idx+1}】字段缺失！bone:${hasBone}, qZero:${hasQZero}, min/max:${hasMinMax}`);
+      ok1 = false;
+    }else{
+      console.log(`【J${idx+1}】限位：min=${j.min.toFixed(3)} rad, max=${j.max.toFixed(3)} rad`);
+    }
+  })
+  if(!ok1){
+    console.error("❌自检失败：关节数据不完整");
+    return;
+  }else{
+    console.log("✅检查1：关节字段齐全");
+  }
+
+  // 检查2：clamp限位测试（核心！超上限、超下限、正常值）
+  const j0 = joints[0];
+  const overMax = j0.max + 0.5;
+  const underMin = j0.min - 0.5;
+  const safeVal = (j0.min + j0.max)/2;
+
+  // ⭐第一个参数传入THREE
+  setJointAngle(THREE, j0, overMax);
+  let afterOver = j0.bone.quaternion.clone();
+  setJointAngle(THREE, j0, underMin);
+  let afterUnder = j0.bone.quaternion.clone();
+  setJointAngle(THREE, j0, safeVal);
+  let afterSafe = j0.bone.quaternion.clone();
+  console.log("✅检查2：clamp限位执行完成，不会报错崩溃");
+
+  // 检查3：批量设置全部关节
+  const midThetas = joints.map(j=>(j.min + j.max)/2);
+  setAllJoints(THREE, joints, midThetas);
+  console.log("✅检查3：批量setAllJoints执行完成");
+
+  // 检查4：回零测试，全部0弧度
+  const zeroThetas = joints.map(()=>0);
+  setAllJoints(THREE, joints, zeroThetas);
+  console.log("✅检查4：回零执行完成");
+
+  console.log("==== 🟢 jointControl 全部自检通过，可以上主页面index.html使用 ====");
+}
+
+runControlTest().catch(e=>{
+  console.error("自检异常：",e);
+})
+</script>
+</body>
+</html>

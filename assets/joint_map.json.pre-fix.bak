@@ -1,0 +1,288 @@
+{
+ "model": "hanz_robot_5dof",
+ "source": "robot_arm_articulated.blend",
+ "convention": {
+  "joint_angle": "rotation about node local +Z (right-hand rule); zero pose = exported rest pose",
+  "naming": "link_base -> J1 -> link_1 -> J2 -> link_2 -> ... -> J5 -> link_5 -> link_flange -> tcp",
+  "note": "5-DOF adaptation; Ji rest rotation = R_fix (local Z = motion axis); motion_axis is the unit vector of link_i local +Z expressed in the parent frame"
+ },
+ "zero_pose": "rest",
+ "joints": [
+  {
+   "name": "J1",
+   "type": "revolute",
+   "axis": "z",
+   "role": "shoulder_pitch",
+   "limit": {
+    "lower": -180.0,
+    "upper": 180.0
+   },
+   "unit": "deg",
+   "translation": [
+    2.852694,
+    -3.833518,
+    4.462912
+   ],
+   "rfix_quat_wxyz": [
+    0.707107,
+    -0.0,
+    -0.707107,
+    -0.0
+   ],
+   "motion_axis": [
+    -1.0,
+    0.0,
+    -0.0
+   ],
+   "dh": {
+    "matrix": [
+     -0.0,
+     0.0,
+     1.0,
+     0.0,
+     0.0,
+     1.0,
+     0.0,
+     0.0,
+     -1.0,
+     0.0,
+     -0.0,
+     0.0,
+     2.852694,
+     -3.833518,
+     4.462912,
+     1.0
+    ]
+   },
+   "pivot_world": [
+    2.32509,
+    0.72649,
+    4.462912
+   ]
+  },
+  {
+   "name": "J2",
+   "type": "revolute",
+   "axis": "z",
+   "role": "elbow_pitch",
+   "limit": {
+    "lower": -120.0,
+    "upper": 120.0
+   },
+   "unit": "deg",
+   "translation": [
+    4.767599,
+    -4.039694,
+    5.686822
+   ],
+   "rfix_quat_wxyz": [
+    0.0,
+    -0.707107,
+    -0.707107,
+    0.0
+   ],
+   "motion_axis": [
+    -0.0,
+    0.0,
+    -1.0
+   ],
+   "dh": {
+    "matrix": [
+     -0.0,
+     1.0,
+     0.0,
+     0.0,
+     1.0,
+     -0.0,
+     -0.0,
+     0.0,
+     -0.0,
+     0.0,
+     -1.0,
+     0.0,
+     4.767599,
+     -4.039694,
+     5.686822,
+     1.0
+    ]
+   },
+   "pivot_world": [
+    -3.361733,
+    -3.313204,
+    9.230511
+   ]
+  },
+  {
+   "name": "J3",
+   "type": "revolute",
+   "axis": "z",
+   "role": "elbow_yaw_tilted28",
+   "limit": {
+    "lower": -120.0,
+    "upper": 120.0
+   },
+   "unit": "deg",
+   "translation": [
+    -0.738351,
+    -0.389247,
+    1.645098
+   ],
+   "rfix_quat_wxyz": [
+    0.707107,
+    -0.331967,
+    0.624338,
+    0.0
+   ],
+   "motion_axis": [
+    0.882948,
+    0.469472,
+    -0.0
+   ],
+   "dh": {
+    "matrix": [
+     0.220403,
+     -0.414519,
+     -0.882948,
+     0.0,
+     -0.414519,
+     0.779596,
+     -0.469472,
+     0.0,
+     0.882948,
+     0.469472,
+     -0.0,
+     0.0,
+     -0.738351,
+     -0.389247,
+     1.645098,
+     1.0
+    ]
+   },
+   "pivot_world": [
+    -1.716634,
+    -4.051555,
+    8.841264
+   ]
+  },
+  {
+   "name": "J4",
+   "type": "revolute",
+   "axis": "z",
+   "role": "wrist_pitch",
+   "limit": {
+    "lower": -120.0,
+    "upper": 120.0
+   },
+   "unit": "deg",
+   "translation": [
+    -2.562976,
+    -1.326979,
+    7.65972
+   ],
+   "rfix_quat_wxyz": [
+    0.707107,
+    -0.331966,
+    0.624338,
+    -0.0
+   ],
+   "motion_axis": [
+    0.882948,
+    0.469471,
+    -0.0
+   ],
+   "dh": {
+    "matrix": [
+     0.220403,
+     -0.414519,
+     -0.882948,
+     0.0,
+     -0.414519,
+     0.779597,
+     -0.469472,
+     0.0,
+     0.882948,
+     0.469471,
+     -0.0,
+     0.0,
+     -2.562976,
+     -1.326979,
+     7.65972,
+     1.0
+    ]
+   },
+   "pivot_world": [
+    1.169319,
+    2.696748,
+    12.465177
+   ]
+  },
+  {
+   "name": "J5",
+   "type": "revolute",
+   "axis": "z",
+   "role": "flange_roll",
+   "limit": {
+    "lower": -180.0,
+    "upper": 180.0
+   },
+   "unit": "deg",
+   "translation": [
+    -1.406159,
+    -2.051737,
+    2.771303
+   ],
+   "rfix_quat_wxyz": [
+    0.707107,
+    -0.586218,
+    0.395409,
+    0.0
+   ],
+   "motion_axis": [
+    0.559193,
+    0.829037,
+    -0.0
+   ],
+   "dh": {
+    "matrix": [
+     0.687303,
+     -0.463592,
+     -0.559193,
+     0.0,
+     -0.463592,
+     0.312697,
+     -0.829037,
+     0.0,
+     0.559193,
+     0.829037,
+     -0.0,
+     0.0,
+     -1.406159,
+     -2.051737,
+     2.771303,
+     1.0
+    ]
+   },
+   "pivot_world": [
+    -1.601986,
+    5.184029,
+    12.483619
+   ]
+  }
+ ],
+ "flange": {
+  "name": "link_flange"
+ },
+ "tcp": {
+  "parent": "link_flange",
+  "offset_local": [
+   7.450580596923828e-08,
+   2.384185791015625e-07,
+   1.3360064029693604
+  ],
+  "world_at_rest": [
+   -1.600979,
+   5.126754,
+   12.491079
+  ]
+ }
+}

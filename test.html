@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh‑CN">
+<head>
+<meta charset="UTF‑8">
+<title>单独测试 robotLoader</title>
+</head>
+<body>
+<h3>robotLoader独立测试，看F12控制台输出</h3>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import { robotLoader } from './src/robot/robotLoader.js';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+async function runTest() {
+  try {
+    // 读取joint_map.json
+    const resp = await fetch('./assets/joint_map.json');
+    if (!resp.ok) throw new Error('读取joint_map.json失败，检查文件名路径');
+    const jointMap = await resp.json();
+
+    console.log('👉开始调用robotLoader加载模型');
+    const { robot, joints, tcp } = await robotLoader('./assets/robot_articulated.glb', jointMap);
+
+    console.log('🎉robotLoader加载完成！');
+    console.table(joints); // 表格打印全部关节，重点看name字段
+
+    // 手动自检：是不是J1 J2 J3 J4 J5五个
+    const names = joints.map(j=>j.name);
+    console.log('关节名字集合：', names);
+
+    // 简单断言
+    if(names.length ===5){
+      console.log('✅校验通过：一共5个关节');
+    }else{
+      console.error('❌校验失败，关节数量不对');
+    }
+
+  } catch(err) {
+    console.error('❌robotLoader测试报错：', err);
+  }
+}
+
+runTest();
+</script>
+<!-- Code injected by live-server -->
+<script>
+	// <![CDATA[  <-- For SVG support
+	if ('WebSocket' in window) {
+		(function () {
+			function refreshCSS() {
+				var sheets = [].slice.call(document.getElementsByTagName("link"));
+				var head = document.getElementsByTagName("head")[0];
+				for (var i = 0; i < sheets.length; ++i) {
+					var elem = sheets[i];
+					var parent = elem.parentElement || head;
+					parent.removeChild(elem);
+					var rel = elem.rel;
+					if (elem.href && typeof rel != "string" || rel.length == 0 || rel.toLowerCase() == "stylesheet") {
+						var url = elem.href.replace(/(&|\?)_cacheOverride=\d+/, '');
+						elem.href = url + (url.indexOf('?') >= 0 ? '&' : '?') + '_cacheOverride=' + (new Date().valueOf());
+					}
+					parent.appendChild(elem);
+				}
+			}
+			var protocol = window.location.protocol === 'http:' ? 'ws://' : 'wss://';
+			var address = protocol + window.location.host + window.location.pathname + '/ws';
+			var socket = new WebSocket(address);
+			socket.onmessage = function (msg) {
+				if (msg.data == 'reload') window.location.reload();
+				else if (msg.data == 'refreshcss') refreshCSS();
+			};
+			if (sessionStorage && !sessionStorage.getItem('IsThisFirstTime_Log_From_LiveServer')) {
+				console.log('Live reload enabled.');
+				sessionStorage.setItem('IsThisFirstTime_Log_From_LiveServer', true);
+			}
+		})();
+	}
+	else {
+		console.error('Upgrade your browser. This Browser is NOT supported WebSocket for Live-Reloading.');
+	}
+	// ]]>
+</script>
+</body>
+</html>
