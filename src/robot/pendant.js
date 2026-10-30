@@ -70,15 +70,38 @@ function limitsOf(joint) {
  * 从节点当前四元数反解关节角（弧度）：q = qZero ⊗ Rz(θ) → θ
  * 节点或 qZero 缺失时退回 joint.angle，保证面板不会因为对象不规范就空白。
  */
+/**
+ * 从节点当前四元数反解关节角。
+ * q = qZero ⊗ R_axis(θ)
+ */
 function readJointAngle(joint) {
-  const node = nodeOf(joint);
-  const q0 = joint.qZero;
-  if (!node || !node.quaternion || !q0) {
-    return Number(joint.angle) || 0;
-  }
-  const rel = qMul(qConj(q0), node.quaternion);
-  // atan2(z, w) 与长度无关，不必再归一化；值域 (-π, π]
-  return 2 * Math.atan2(rel.z, rel.w);
+    const node = nodeOf(joint);
+    const q0 = joint.qZero;
+
+    if (!node || !node.quaternion || !q0) {
+        return Number(joint.angle) || 0;
+    }
+
+    // 去除初始姿态
+    const rel = qMul(qConj(q0), node.quaternion);
+
+    // 使用关节实际局部旋转轴
+    const axis = joint.axis || { x: 0, y: 1, z: 0 };
+
+    const len = Math.hypot(axis.x, axis.y, axis.z);
+
+    if (len < 1e-8) {
+        return Number(joint.angle) || 0;
+    }
+
+    const x = axis.x / len;
+    const y = axis.y / len;
+    const z = axis.z / len;
+
+    // 四元数虚部在旋转轴上的投影
+    const sinHalf = rel.x * x + rel.y * y + rel.z * z;
+
+    return 2 * Math.atan2(sinHalf, rel.w);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -382,7 +405,15 @@ export function createPendant(options = {}) {
     const q0 = wJoint.qZero;
     if (!node || !node.quaternion || !q0) return a;
     const half = a / 2;
-    const q = qMul(q0, { x: 0, y: 0, z: Math.sin(half), w: Math.cos(half) });
+    const axis = wJoint.axis || { x: 0, y: 1, z: 0 };
+    const len = Math.hypot(axis.x, axis.y, axis.z);
+
+    const q = qMul(q0, {
+    x: axis.x / len * Math.sin(half),
+    y: axis.y / len * Math.sin(half),
+    z: axis.z / len * Math.sin(half),
+    w: Math.cos(half)
+    });
     if (typeof node.quaternion.set === 'function') node.quaternion.set(q.x, q.y, q.z, q.w);
     else Object.assign(node.quaternion, q);
     if (typeof node.updateMatrixWorld === 'function') node.updateMatrixWorld(true);

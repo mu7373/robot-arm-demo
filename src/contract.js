@@ -36,7 +36,10 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
  * ══════════════════════════════════════════════════════════════ */
 
 /** 运动轴：模型1 的 5 个关节全部绕节点局部 +Z（右手定则）。 */
-export const LOCAL_AXIS = Object.freeze(new THREE.Vector3(0, 0, 1));
+// GLB 导出后，Blender 局部 +Z 对应 GLB 局部 +Y
+export const LOCAL_AXIS = Object.freeze(
+    new THREE.Vector3(0, 1, 0)
+);
 
 /** MOVJ 默认每个关节的最大速度 rad/s。教学用保守值，调用方可覆盖。 */
 export const DEFAULT_MAX_JOINT_SPEED = Object.freeze([
@@ -234,7 +237,8 @@ export class RobotController {
     if (!joint || !joint.node) throw new Error('[contract] setJoint 收到无效的 joint');
     const a = clamp(Number(angleRad) || 0, joint.lower, joint.upper);
     joint.angle = a;
-    joint.node.quaternion.copy(joint.qZero).multiply(_dq.setFromAxisAngle(LOCAL_AXIS, a));
+    joint.node.quaternion.copy(joint.qZero)
+    .multiply(_dq.setFromAxisAngle(joint.axis, a));
     return a;
   }
 

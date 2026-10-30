@@ -189,9 +189,15 @@ function checkRig() {
 }
 
 window.view = {
-  scene, camera, controls, robot, toolTip, renderer,
-  joints: ctl.joints,
-  checkRig
+    scene,
+    camera,
+    controls,
+    robot,
+    toolTip,
+    renderer,
+    joints: ctl.joints,
+    controller: ctl,
+    checkRig
 };
 
 // 标定准备姿态：让臂弯起来，四个姿态和三个示教点都够得着

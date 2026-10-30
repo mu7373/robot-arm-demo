@@ -129,7 +129,15 @@ window.pendant = pendant;   // 方便在 F12 里直接调：pendant.setPoseDeg([
 window.checkRig = () => {
   const rows = ctl.joints.map((j) => {
     const rel = j.qZero.clone().invert().multiply(j.node.quaternion);
-    const fromQuat = 2 * Math.atan2(rel.z, rel.w) * 180 / Math.PI;
+    const axis = j.axis;
+
+    const sinHalf =
+    rel.x * axis.x +
+    rel.y * axis.y +
+    rel.z * axis.z;
+
+    const fromQuat =
+    2 * Math.atan2(sinHalf, rel.w) * 180 / Math.PI;
     const angleDeg = (Number(j.angle) || 0) * 180 / Math.PI;
     return {
       关节: j.name,
